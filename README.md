@@ -31,3 +31,10 @@ Lesson-rearrangement-pages/
 `config.js` 內的 `API_URL` 和 `LEGACY_WEBAPP_URL` 需要在 public repo 部署前填入。
 
 注意：public repo 內的 `config.js` 會被公開讀取，所以 Apps Script API 不能只依賴 URL 保密。正式使用前應確認 Apps Script Web App 的存取權限設定符合學校需要。
+
+## 同步策略
+
+- 前台輸入會即時更新畫面。
+- 輕量頁面可用背景自動同步，預設停手 5 秒後才寫入後台，避免每打一格都呼叫 Apps Script。
+- `AUTO_SAVE_SECTIONS` 預設只包含 `request`、`adjust`、`manualPlan`、`cancelled`。
+- `duty`（安排代課）保留手動「同步到後台 / 確認並同步」，因為後端儲存會連動較重的 Apps Script 流程。

@@ -232,6 +232,13 @@ a {
   background: rgba(255, 255, 255, 0.72);
 }
 
+.compact-button {
+  width: 100%;
+  min-height: 36px;
+  margin-top: 10px;
+  padding: 7px 10px;
+}
+
 .button:disabled,
 .tool-button:disabled,
 .disabled-link {
@@ -296,6 +303,33 @@ a {
   font-size: 1.55rem;
   line-height: 1.15;
   overflow-wrap: anywhere;
+}
+
+.date-card-control,
+.inline-date-control {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.date-card-control span,
+.inline-date-control span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.date-input {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #cfd9e4;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  color: var(--ink);
+}
+
+.inline-date-control {
+  width: min(190px, 100%);
 }
 
 .metric-card.color-blue { border-top: 4px solid var(--blue); }
@@ -371,6 +405,10 @@ a {
 
 .dirty-line.is-dirty {
   color: #a65212;
+}
+
+.dirty-line.is-saving {
+  color: var(--blue);
 }
 
 .filter-bar {
@@ -460,6 +498,27 @@ td.readonly {
   width: 22px;
   height: 22px;
   accent-color: var(--blue);
+}
+
+.row-action-cell {
+  width: 92px;
+  text-align: center;
+}
+
+.row-delete-button {
+  min-height: 34px;
+  border: 1px solid rgba(217, 72, 72, 0.34);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 247, 247, 0.92);
+  color: #9d2525;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.row-delete-button:hover {
+  border-color: rgba(217, 72, 72, 0.72);
+  background: #fff1f1;
 }
 
 .tool-grid {
