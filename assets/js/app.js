@@ -5,9 +5,9 @@
     dashboard: "首頁",
     request: "缺課名單",
     adjust: "調堂安排",
-    manualPlan: "代課老師",
+    manualPlan: "外援代課老師安排",
     cancelled: "取消課節可調入名單",
-    duty: "安排代課",
+    duty: "編排是日代課節數",
     tools: "系統工具"
   };
 
@@ -36,13 +36,8 @@
       sortBy: "period",
       direction: "asc"
     },
-    loaded: new Set(),
     dirty: new Set(),
-    dirtyVersion: {},
-    autoSaveTimers: new Map(),
-    saving: new Set(),
     isSyncing: false,
-    isSwitchingDate: false,
     lastSyncAt: null
   };
 
@@ -55,14 +50,12 @@
     bindActions();
     bindApiStatus();
     renderAll();
-    refreshCurrentView();
-    window.setInterval(autoRefresh, getAutoRefreshMs());
   }
 
   function applyConfigText() {
     const config = window.APP_CONFIG || {};
     $$("[data-app-name]").forEach(el => { el.textContent = config.APP_NAME || "編代課系統"; });
-    $$("[data-app-subtitle]").forEach(el => { el.textContent = config.APP_SUBTITLE || "網頁同步版"; });
+    $$("[data-app-subtitle]").forEach(el => { el.textContent = config.APP_SUBTITLE || ""; });
     $$("[data-school-name]").forEach(el => { el.textContent = config.SCHOOL_NAME || ""; });
   }
 
@@ -84,12 +77,14 @@
     $$("[data-add-row]").forEach(button => {
       button.addEventListener("click", () => addRow(button.dataset.addRow));
     });
-    $$("[data-save-date]").forEach(button => button.addEventListener("click", saveScheduleDate));
-    $$("[data-schedule-date]").forEach(input => {
-      input.addEventListener("change", () => switchScheduleDate(input.value));
+    $$("[data-remove-row]").forEach(button => {
+      button.addEventListener("click", () => removeRow(button.dataset.removeRow));
     });
-    const arrangeButton = $("[data-confirm-arrange]");
-    if (arrangeButton) arrangeButton.addEventListener("click", confirmArrange);
+    $$("[data-confirm-arrange]").forEach(button => {
+      button.addEventListener("click", confirmArrange);
+    });
+    const switchDateButton = $("[data-switch-date]");
+    if (switchDateButton) switchDateButton.addEventListener("click", switchScheduleDate);
     bindDutyFilter();
     $$("[data-run-action]").forEach(button => {
       button.addEventListener("click", () => runBackendAction(button.dataset.runAction, button.textContent.trim()));
@@ -152,32 +147,11 @@
     });
   }
 
-  function getAutoRefreshMs() {
-    const ms = Number((window.APP_CONFIG || {}).AUTO_REFRESH_MS);
-    return Number.isFinite(ms) && ms >= 5000 ? ms : 15000;
-  }
-
-  function getAutoSaveDelayMs() {
-    const ms = Number((window.APP_CONFIG || {}).AUTO_SAVE_DELAY_MS);
-    return Number.isFinite(ms) && ms >= 1000 ? ms : 2000;
-  }
-
-  function isAutoSaveEnabled(sectionName) {
-    const sections = (window.APP_CONFIG || {}).AUTO_SAVE_SECTIONS;
-    return Array.isArray(sections) && sections.includes(sectionName);
-  }
-
   function setActiveView(viewName) {
     state.activeView = viewName;
     $$("[data-nav]").forEach(button => button.classList.toggle("active", button.dataset.nav === viewName));
     $$("[data-view]").forEach(view => view.classList.toggle("active", view.dataset.view === viewName));
     $("[data-page-title]").textContent = PAGE_TITLES[viewName] || "編代課系統";
-    if (viewName !== "dashboard" && viewName !== "tools" && !state.loaded.has(viewName) && window.AppApi.hasApiUrl()) {
-      refreshSection(viewName);
-    }
-    if (viewName === "tools" && !state.loaded.has("meta") && window.AppApi.hasApiUrl()) {
-      refreshMeta().then(renderAll).catch(err => showToast(err.message || "同步失敗", "error"));
-    }
   }
 
   async function syncAll() {
@@ -187,23 +161,19 @@
     }
 
     try {
-      const [meta, request, adjust, manualPlan, cancelled, duty] = await Promise.all([
-        window.AppApi.apiCall(READ_ACTIONS.meta),
-        window.AppApi.apiCall(READ_ACTIONS.request),
-        window.AppApi.apiCall(READ_ACTIONS.adjust),
-        window.AppApi.apiCall(READ_ACTIONS.manualPlan),
-        window.AppApi.apiCall(READ_ACTIONS.cancelled),
-        window.AppApi.apiCall(READ_ACTIONS.duty)
-      ]);
+      const meta = await window.AppApi.apiCall(READ_ACTIONS.meta);
+      const request = await window.AppApi.apiCall(READ_ACTIONS.request);
+      const adjust = await window.AppApi.apiCall(READ_ACTIONS.adjust);
+      const manualPlan = await window.AppApi.apiCall(READ_ACTIONS.manualPlan);
+      const cancelled = await window.AppApi.apiCall(READ_ACTIONS.cancelled);
+      const duty = await window.AppApi.apiCall(READ_ACTIONS.duty);
 
       state.meta = meta || null;
-      state.loaded.add("meta");
       state.request = normalizeRequestData(request);
       state.adjust = normalizeAdjustData(adjust);
       state.manualPlan = normalizeEditableData(manualPlan);
       state.cancelled = normalizeEditableData(cancelled);
       state.duty = normalizeDutyData(duty);
-      ["request", "adjust", "manualPlan", "cancelled", "duty"].forEach(sectionName => state.loaded.add(sectionName));
       state.dirty.clear();
       updateLastSync();
       renderAll();
@@ -246,27 +216,6 @@
 
   async function refreshMeta() {
     state.meta = await window.AppApi.apiCall(READ_ACTIONS.meta);
-    state.loaded.add("meta");
-  }
-
-  async function autoRefresh() {
-    if (!window.AppApi.hasApiUrl() || state.isSyncing) return;
-    if (state.dirty.size) {
-      setSyncStatus("尚未同步", "dirty");
-      return;
-    }
-
-    try {
-      await refreshMeta();
-      if (state.activeView !== "dashboard" && state.activeView !== "tools") {
-        const data = await window.AppApi.apiCall(READ_ACTIONS[state.activeView]);
-        assignSectionData(state.activeView, data);
-      }
-      updateLastSync();
-      renderAll();
-    } catch (err) {
-      setSyncStatus("同步失敗", "failed");
-    }
   }
 
   function assignSectionData(sectionName, data) {
@@ -275,7 +224,6 @@
     if (sectionName === "manualPlan") state.manualPlan = normalizeEditableData(data);
     if (sectionName === "cancelled") state.cancelled = normalizeEditableData(data);
     if (sectionName === "duty") state.duty = normalizeDutyData(data);
-    state.loaded.add(sectionName);
     state.dirty.delete(sectionName);
   }
 
@@ -285,68 +233,33 @@
       showToast("此頁沒有尚未同步改動。");
       return;
     }
-    if (state.saving.has(sectionName)) {
-      showToast("此頁正在自動同步，請稍候。");
-      return;
-    }
 
     try {
-      cancelAutoSave(sectionName);
-      await persistSectionData(sectionName, { runSideEffects: true });
+      if (sectionName === "request") {
+        await window.AppApi.apiCall("apiSaveRequestData", {
+          dateInput: state.request.dateInput || summaryValue("selectedDateInput"),
+          rows: state.request.rows
+        });
+        await window.AppApi.apiCall("apiRunAction", { actionName: "autoGenerateAndApplyManualSubstitutePlan" });
+      }
+      if (sectionName === "adjust") {
+        await window.AppApi.apiCall("apiSaveAdjustData", { rows: state.adjust.rows });
+      }
+      if (sectionName === "manualPlan") {
+        await window.AppApi.apiCall("apiSaveManualPlanData", { rows: state.manualPlan.rows });
+      }
+      if (sectionName === "cancelled") {
+        await window.AppApi.apiCall("apiSaveCancelledAvailableData", { rows: state.cancelled.rows });
+      }
+      if (sectionName === "duty") {
+        await window.AppApi.apiCall("apiSaveDutyData", { rows: state.duty.rows });
+      }
+
       state.dirty.delete(sectionName);
-      await refreshAfterSave(sectionName);
+      await syncAll();
       showToast("已同步");
     } catch (err) {
       showToast(err.message || "同步失敗", "error");
-    }
-  }
-
-  async function saveScheduleDate() {
-    await switchScheduleDate(getScheduleDateValue(), { force: true });
-  }
-
-  async function switchScheduleDate(dateInput, options) {
-    const settings = Object.assign({ force: false }, options || {});
-    if (!ensureApiConfigured()) return;
-    const nextDate = dateInput || "";
-    const currentDate = state.request.dateInput || summaryValue("selectedDateInput") || "";
-
-    if (!settings.force && nextDate === currentDate) {
-      updateScheduleDate(nextDate);
-      return;
-    }
-
-    if (state.isSwitchingDate) {
-      setScheduleDateInputs(currentDate);
-      showToast("日期資料正在載入，請稍候。");
-      return;
-    }
-
-    if (state.dirty.size || state.saving.size) {
-      setScheduleDateInputs(currentDate);
-      setSyncStatus("尚未同步", "dirty");
-      showToast("有尚未同步改動，請先確認並同步後再轉日期。", "error");
-      return;
-    }
-
-    try {
-      state.isSwitchingDate = true;
-      cancelAllAutoSaves();
-      updateScheduleDate(nextDate);
-      setSyncStatus("正在載入日期資料", "syncing");
-      setButtonsDisabled(true);
-
-      const result = await window.AppApi.apiCall("apiSwitchScheduleDateAndLoad", { dateInput: nextDate });
-      clearDirtyState();
-      await refreshAfterDateSwitch();
-      showToast((result && result.message) || (result && result.loaded ? "已載入日期資料" : "此日期未有資料夾資料，已顯示空白。"));
-    } catch (err) {
-      updateScheduleDate(currentDate);
-      showToast(err.message || "同步日期失敗", "error");
-    } finally {
-      state.isSwitchingDate = false;
-      setButtonsDisabled(state.isSyncing);
-      renderDirtyLines();
     }
   }
 
@@ -356,7 +269,7 @@
       await window.AppApi.apiCall("apiSaveDutyData", { rows: state.duty.rows });
       await window.AppApi.apiCall("apiRunAction", { actionName: "autoGenerateAndSuggest" });
       state.dirty.delete("duty");
-      await refreshAfterSave("duty");
+      await syncAll();
       showToast("已同步");
     } catch (err) {
       showToast(err.message || "同步失敗", "error");
@@ -366,176 +279,125 @@
   async function runBackendAction(actionName, label) {
     if (!ensureApiConfigured()) return;
     if (state.dirty.size) {
-      showToast("正在先同步未儲存改動...");
-      await flushDirtySections();
-      if (state.dirty.size) {
-        showToast("仍有尚未同步改動，請先處理表格改動。", "error");
-        setSyncStatus("尚未同步", "dirty");
-        return;
-      }
+      showToast("仍有尚未同步改動，請先處理表格改動。", "error");
+      setSyncStatus("尚未同步", "dirty");
+      return;
     }
     const confirmed = window.confirm("執行「" + label + "」？");
     if (!confirmed) return;
 
+    const accessWindow = prepareAccessSheetWindow(actionName);
     try {
       await window.AppApi.apiCall("apiRunAction", { actionName });
-      await refreshAfterAction();
+      await syncAll();
+      completeAccessSheetWindow(accessWindow);
       showToast("已同步");
+    } catch (err) {
+      closeAccessSheetWindow(accessWindow);
+      showToast(err.message || "同步失敗", "error");
+    }
+  }
+
+  function prepareAccessSheetWindow(actionName) {
+    if (actionName !== "exportAndUpdateSummary") return null;
+    const url = getAccessSheetUrl();
+    if (url) {
+      window.open(url, "_blank", "noopener");
+      return { opened: true, popup: null };
+    }
+    return { opened: false, popup: window.open("about:blank", "_blank") };
+  }
+
+  function completeAccessSheetWindow(accessWindow) {
+    if (!accessWindow || accessWindow.opened) return;
+    const url = getAccessSheetUrl();
+    if (!url) {
+      closeAccessSheetWindow(accessWindow);
+      return;
+    }
+    if (accessWindow.popup && !accessWindow.popup.closed) {
+      accessWindow.popup.location.href = url;
+      try {
+        accessWindow.popup.opener = null;
+      } catch (err) {
+        // Some browsers block opener reassignment after navigation.
+      }
+      return;
+    }
+    window.open(url, "_blank", "noopener");
+  }
+
+  function closeAccessSheetWindow(accessWindow) {
+    if (accessWindow && accessWindow.popup && !accessWindow.popup.closed) {
+      accessWindow.popup.close();
+    }
+  }
+
+  function getAccessSheetUrl() {
+    return state.meta && state.meta.accessSheetUrl ? state.meta.accessSheetUrl : "";
+  }
+
+  async function switchScheduleDate() {
+    if (!ensureApiConfigured()) return;
+
+    const input = $("#dateSwitchInput");
+    const dateInput = input ? input.value : "";
+    const confirmed = window.confirm("切換日期會檢查該日備存；有資料會載入，沒有資料會清空每日資料並保留新日期。確定繼續？");
+    if (!confirmed) return;
+
+    try {
+      const result = await switchScheduleDateAndLoad(dateInput);
+      await syncAll();
+      showToast(result && result.message ? result.message : "已同步");
     } catch (err) {
       showToast(err.message || "同步失敗", "error");
     }
   }
 
-  async function persistSectionData(sectionName, options) {
-    const settings = Object.assign({ runSideEffects: false }, options || {});
-    if (sectionName === "request") {
-      await window.AppApi.apiCall("apiSaveRequestData", {
-        dateInput: state.request.dateInput === undefined ? summaryValue("selectedDateInput") : state.request.dateInput,
-        rows: cloneRows(state.request.rows)
-      });
-      if (settings.runSideEffects) {
-        await window.AppApi.apiCall("apiRunAction", { actionName: "autoGenerateAndApplyManualSubstitutePlan" });
-      }
-    }
-    if (sectionName === "adjust") {
-      await window.AppApi.apiCall("apiSaveAdjustData", { rows: cloneRows(state.adjust.rows) });
-    }
-    if (sectionName === "manualPlan") {
-      await window.AppApi.apiCall("apiSaveManualPlanData", { rows: cloneRows(state.manualPlan.rows) });
-    }
-    if (sectionName === "cancelled") {
-      await window.AppApi.apiCall("apiSaveCancelledAvailableData", { rows: cloneRows(state.cancelled.rows) });
-    }
-    if (sectionName === "duty") {
-      await window.AppApi.apiCall("apiSaveDutyData", { rows: cloneRows(state.duty.rows) });
-    }
-  }
-
-  async function flushDirtySections() {
-    const sections = Array.from(state.dirty);
-    await Promise.all(sections.map(sectionName => autoSaveSection(sectionName, { quiet: true })));
-  }
-
-  function scheduleAutoSave(sectionName) {
-    if (!window.AppApi.hasApiUrl()) return;
-    if (!isAutoSaveEnabled(sectionName)) return;
-    cancelAutoSave(sectionName);
-    const timer = window.setTimeout(() => autoSaveSection(sectionName), getAutoSaveDelayMs());
-    state.autoSaveTimers.set(sectionName, timer);
-    renderDirtyLines();
-  }
-
-  function cancelAutoSave(sectionName) {
-    const timer = state.autoSaveTimers.get(sectionName);
-    if (timer) window.clearTimeout(timer);
-    state.autoSaveTimers.delete(sectionName);
-  }
-
-  function cancelAllAutoSaves() {
-    state.autoSaveTimers.forEach(timer => window.clearTimeout(timer));
-    state.autoSaveTimers.clear();
-  }
-
-  function clearDirtyState() {
-    cancelAllAutoSaves();
-    state.dirty.clear();
-    state.dirtyVersion = {};
-  }
-
-  async function autoSaveSection(sectionName, options) {
-    const settings = Object.assign({ quiet: false }, options || {});
-    cancelAutoSave(sectionName);
-    if (!state.dirty.has(sectionName)) return;
-    if (state.saving.has(sectionName)) {
-      scheduleAutoSave(sectionName);
-      return;
-    }
-
-    const versionAtStart = state.dirtyVersion[sectionName] || 0;
-    state.saving.add(sectionName);
-    renderDirtyLines();
-
+  async function switchScheduleDateAndLoad(dateInput) {
     try {
-      await persistSectionData(sectionName, { runSideEffects: false });
-      if ((state.dirtyVersion[sectionName] || 0) === versionAtStart) {
-        state.dirty.delete(sectionName);
-        await refreshAfterLightSave();
-        if (!settings.quiet) showToast("已自動同步");
-      } else {
-        scheduleAutoSave(sectionName);
-      }
+      return await window.AppApi.apiCall("apiSwitchScheduleDateAndLoad", { dateInput }, { suppressFailureStatus: true });
     } catch (err) {
-      setSyncStatus("同步失敗", "failed");
-      if (!settings.quiet) showToast(err.message || "自動同步失敗", "error");
-    } finally {
-      state.saving.delete(sectionName);
-      renderDirtyLines();
+      if (!isUnsupportedActionError(err, "apiSwitchScheduleDateAndLoad")) {
+        setSyncStatus("同步失敗", "failed");
+        throw err;
+      }
+      return switchScheduleDateAndLoadFallback(dateInput);
     }
   }
 
-  async function refreshAfterLightSave() {
-    state.meta = await window.AppApi.apiCall(READ_ACTIONS.meta);
-    state.loaded.add("meta");
-    updateLastSync();
-    renderDashboard();
-    renderDirtyLines();
-    updateLinks();
-  }
-
-  async function refreshAfterSave(sectionName) {
-    const jobs = [
-      window.AppApi.apiCall(READ_ACTIONS.meta).then(meta => {
-        state.meta = meta || null;
-        state.loaded.add("meta");
-      })
-    ];
-    if (READ_ACTIONS[sectionName]) {
-      jobs.push(window.AppApi.apiCall(READ_ACTIONS[sectionName]).then(data => assignSectionData(sectionName, data)));
-    }
-    await Promise.all(jobs);
-    updateLastSync();
-    renderAll();
-  }
-
-  async function refreshAfterAction() {
-    const activeView = state.activeView;
-    const jobs = [
-      window.AppApi.apiCall(READ_ACTIONS.meta).then(meta => {
-        state.meta = meta || null;
-        state.loaded.add("meta");
-      })
-    ];
-    if (READ_ACTIONS[activeView]) {
-      jobs.push(window.AppApi.apiCall(READ_ACTIONS[activeView]).then(data => assignSectionData(activeView, data)));
-    }
-    await Promise.all(jobs);
-    updateLastSync();
-    renderAll();
-  }
-
-  async function refreshAfterDateSwitch() {
-    const sectionsToReload = new Set(
-      Array.from(state.loaded).filter(sectionName => sectionName !== "meta" && READ_ACTIONS[sectionName])
-    );
-
-    if (state.activeView !== "dashboard" && state.activeView !== "tools" && READ_ACTIONS[state.activeView]) {
-      sectionsToReload.add(state.activeView);
-    }
-
-    const jobs = [
-      window.AppApi.apiCall(READ_ACTIONS.meta).then(meta => {
-        state.meta = meta || null;
-        state.loaded.add("meta");
-      })
-    ];
-
-    sectionsToReload.forEach(sectionName => {
-      jobs.push(window.AppApi.apiCall(READ_ACTIONS[sectionName]).then(data => assignSectionData(sectionName, data)));
+  async function switchScheduleDateAndLoadFallback(dateInput) {
+    const requestRows = await readCurrentRequestRowsForDateFallback();
+    await window.AppApi.apiCall("apiSaveRequestData", {
+      dateInput,
+      rows: requestRows
     });
+    try {
+      return await window.AppApi.apiCall("apiRunAction", { actionName: "importCsv" });
+    } catch (err) {
+      if (!isMissingDateBackupError(err)) throw err;
+      await window.AppApi.apiCall("apiRunAction", { actionName: "clearDailyData" });
+      return { success: true, loaded: false, cleared: true, message: "找不到該日期備存，已清空舊有資料。" };
+    }
+  }
 
-    await Promise.all(jobs);
-    updateLastSync();
-    renderAll();
+  async function readCurrentRequestRowsForDateFallback() {
+    try {
+      const requestData = await window.AppApi.apiCall(READ_ACTIONS.request);
+      return requestData && Array.isArray(requestData.rows) ? requestData.rows : [];
+    } catch (err) {
+      return state.request && Array.isArray(state.request.rows) ? state.request.rows : [];
+    }
+  }
+
+  function isUnsupportedActionError(err, actionName) {
+    const message = err && err.message ? err.message : String(err || "");
+    return message.includes("不支援的 API action") && message.includes(actionName);
+  }
+
+  function isMissingDateBackupError(err) {
+    const message = err && err.message ? err.message : String(err || "");
+    return message.includes("找不到日期子資料夾") || message.includes("B2 沒日期");
   }
 
   function addRow(sectionName) {
@@ -552,42 +414,33 @@
     if (sectionName === "cancelled") {
       state.cancelled.rows.push([""]);
     }
+    if (sectionName === "duty") {
+      const width = Math.max(25, state.duty.headers.length || 0);
+      state.duty.rows.push(Array.from({ length: width }, () => ""));
+    }
     markDirty(sectionName);
     renderAll();
   }
 
-  function removeRow(sectionName, rowIndex) {
-    if (sectionName === "request") state.request.rows.splice(rowIndex, 1);
-    if (sectionName === "adjust") state.adjust.rows.splice(rowIndex, 1);
-    if (sectionName === "manualPlan") state.manualPlan.rows.splice(rowIndex, 1);
-    if (sectionName === "cancelled") state.cancelled.rows.splice(rowIndex, 1);
+  function removeRow(sectionName) {
+    const rows = getRowsForSection(sectionName);
+    if (!rows || !rows.length) {
+      showToast("沒有可刪除的列。", "error");
+      return;
+    }
+    rows.pop();
     markDirty(sectionName);
     renderAll();
+    showToast("已刪除最後一列，按「同步到後台」後才會寫入。");
   }
 
-  function removeDutyRow(row) {
-    const rowIndex = state.duty.rows.indexOf(row);
-    if (rowIndex === -1) return;
-    state.duty.rows.splice(rowIndex, 1);
-    markDirty("duty");
-    renderAll();
-  }
-
-  function updateScheduleDate(dateInput) {
-    state.request.dateInput = dateInput || "";
-    setScheduleDateInputs(state.request.dateInput);
-    setText("#metricDate", formatDateInputForDisplay(state.request.dateInput) || "--");
-  }
-
-  function getScheduleDateValue() {
-    const input = $("[data-schedule-date]");
-    return input ? input.value : (state.request.dateInput || "");
-  }
-
-  function setScheduleDateInputs(dateInput) {
-    $$("[data-schedule-date]").forEach(input => {
-      if (input.value !== (dateInput || "")) input.value = dateInput || "";
-    });
+  function getRowsForSection(sectionName) {
+    if (sectionName === "request") return state.request.rows;
+    if (sectionName === "adjust") return state.adjust.rows;
+    if (sectionName === "manualPlan") return state.manualPlan.rows;
+    if (sectionName === "cancelled") return state.cancelled.rows;
+    if (sectionName === "duty") return state.duty.rows;
+    return null;
   }
 
   function renderAll() {
@@ -627,22 +480,24 @@
 
   function renderDashboard() {
     const summary = (state.meta && state.meta.summary) || {};
-    const dateInput = state.request.dateInput || summary.selectedDateInput || "";
-    setScheduleDateInputs(dateInput);
-    setText("#metricDate", state.dirty.has("request") && dateInput ? formatDateInputForDisplay(dateInput) : (summary.selectedDateDisplay || formatDateInputForDisplay(dateInput) || "--"));
+    setText("#metricDate", summary.selectedDateDisplay || "--");
     setText("#metricWeekday", summary.selectedWeekday || "--");
     setText("#metricRequestCount", numberOrDash(summary.requestCount));
     setText("#metricAdjustCount", numberOrDash(summary.adjustCount));
     setText("#metricDutyCount", numberOrDash(summary.dutyCount));
     setText("#metricFolder", summary.folderName || "--");
     setText("#homeLastSync", state.lastSyncAt ? formatTime(state.lastSyncAt) : "--");
+    const dateInput = $("#dateSwitchInput");
+    if (dateInput && document.activeElement !== dateInput) {
+      dateInput.value = summary.selectedDateInput || "";
+    }
   }
 
   function renderRequestTable() {
     const table = $("#requestTable");
     clear(table);
     const headers = state.request.header.length ? state.request.header : ["教師", "D1", "L1", "L2", "D3", "L3", "L4", "D4", "L5", "D5", "L6", "D7", "L7", "不用扣課節", "備註"];
-    appendHeader(table, headers.concat("操作"));
+    appendHeader(table, headers);
     const body = table.createTBody();
     state.request.rows.forEach((row, rowIndex) => {
       const tr = body.insertRow();
@@ -661,36 +516,34 @@
           td.className = "checkbox-td";
         }
       });
-      appendDeleteCell(tr, () => removeRow("request", rowIndex));
     });
-    appendEmptyState(table, state.request.rows.length, headers.length + 1);
+    appendEmptyState(table, state.request.rows.length, headers.length);
   }
 
   function renderAdjustTable() {
     const table = $("#adjustTable");
     clear(table);
     const headers = ["課節編號", "星期", "節", "科目", "班別或組別", "原任老師", "調堂老師", "還"];
-    appendHeader(table, headers.concat("操作"));
+    appendHeader(table, headers);
     const body = table.createTBody();
-    state.adjust.rows.forEach((row, rowIndex) => {
+    state.adjust.rows.forEach(row => {
       const tr = body.insertRow();
       appendEditableCell(tr, row.id || "", value => { row.id = value; markDirty("adjust"); });
       ["weekday", "period", "subject", "group", "originTeacher"].forEach(key => appendReadonlyCell(tr, row[key] || ""));
       appendEditableCell(tr, row.swapTeacher || "", value => { row.swapTeacher = value; markDirty("adjust"); });
       const td = tr.insertCell();
       td.appendChild(createCheckbox(Boolean(row.repay), checked => { row.repay = checked; markDirty("adjust"); }));
-      appendDeleteCell(tr, () => removeRow("adjust", rowIndex));
     });
-    appendEmptyState(table, state.adjust.rows.length, headers.length + 1);
+    appendEmptyState(table, state.adjust.rows.length, headers.length);
   }
 
   function renderEditableTable(tableId, sectionName, data, editableCols) {
     const table = $("#" + tableId);
     clear(table);
     const headers = data.headers && data.headers.length ? data.headers : ["A", "B", "C", "D", "E", "F", "G", "H"];
-    appendHeader(table, headers.concat("操作"));
+    appendHeader(table, headers);
     const body = table.createTBody();
-    data.rows.forEach((row, rowIndex) => {
+    data.rows.forEach(row => {
       const tr = body.insertRow();
       headers.forEach((header, colIndex) => {
         if (editableCols.includes(colIndex)) {
@@ -702,97 +555,45 @@
           appendReadonlyCell(tr, row[colIndex] || "");
         }
       });
-      appendDeleteCell(tr, () => removeRow(sectionName, rowIndex));
     });
-    appendEmptyState(table, data.rows.length, headers.length + 1);
+    appendEmptyState(table, data.rows.length, headers.length);
   }
 
   function renderDutyTable() {
     const table = $("#dutyTable");
     clear(table);
-    const visibleCols = getDutyVisibleCols();
-    appendHeader(table, visibleCols.map(col => col.label || state.duty.headers[col.idx] || ("欄 " + (col.idx + 1))).concat("操作"));
+    const visibleCols = state.duty.visibleCols && state.duty.visibleCols.length
+      ? state.duty.visibleCols
+      : fallbackDutyVisibleCols();
+    appendHeader(table, visibleCols.map(col => col.label || state.duty.headers[col.idx] || ("欄 " + (col.idx + 1))));
     const body = table.createTBody();
-    const visibleRows = getVisibleDutyRows();
-    visibleRows.forEach(row => {
+    getVisibleDutyRows().forEach(row => {
       const tr = body.insertRow();
       visibleCols.forEach(col => {
         const value = row[col.idx] || "";
-        let td;
         if (col.readonly) {
-          td = appendReadonlyCell(tr, value);
+          appendReadonlyCell(tr, value);
         } else if (col.idx === 7 && state.duty.statusOptions && state.duty.statusOptions.length) {
-          td = appendSelectCell(tr, value, state.duty.statusOptions, selected => updateDutyCell(row, col.idx, selected, tr));
-          td.classList.add("duty-status-cell");
+          appendSelectCell(tr, value, state.duty.statusOptions, selected => {
+            row[col.idx] = selected;
+            applyDutyStatusSideEffectsToClientRow(row);
+            markDirty("duty");
+            renderDutyFilterOptions();
+            renderDutyTable();
+          });
         } else {
-          td = appendEditableCell(tr, value, updated => updateDutyCell(row, col.idx, updated, tr));
+          appendEditableCell(tr, value, updated => {
+            row[col.idx] = updated;
+            markDirty("duty");
+          });
         }
-        td.dataset.dutyCol = String(col.idx);
       });
-      appendDeleteCell(tr, () => removeDutyRow(row));
     });
-    appendEmptyState(table, visibleRows.length, visibleCols.length + 1);
-  }
-
-  function getDutyVisibleCols() {
-    return state.duty.visibleCols && state.duty.visibleCols.length
-      ? state.duty.visibleCols
-      : fallbackDutyVisibleCols();
-  }
-
-  function updateDutyCell(row, colIdx, value, tr) {
-    row[colIdx] = value;
-
-    if (colIdx === 7) {
-      applyDutyStatusSideEffectsToClientRow(row);
-      markDirty("duty");
-      if (shouldRerenderDutyTableAfterStatusChange()) {
-        renderDutyTable();
-      } else {
-        updateDutyRowCells(tr, row);
-      }
-      return;
-    }
-
-    markDirty("duty");
-  }
-
-  function shouldRerenderDutyTableAfterStatusChange() {
-    const filter = state.dutyFilter;
-    return Boolean(
-      filter.search ||
-      filter.status ||
-      filter.teacher ||
-      filter.sortBy === "status" ||
-      filter.sortBy === "substituteTeacher"
-    );
-  }
-
-  function updateDutyRowCells(tr, row) {
-    if (!tr) return;
-    getDutyVisibleCols().forEach(col => {
-      const td = tr.querySelector('[data-duty-col="' + col.idx + '"]');
-      if (!td) return;
-      const value = row[col.idx] || "";
-      const input = td.querySelector("input");
-      const select = td.querySelector("select");
-
-      if (input) {
-        input.value = value;
-        input.title = value;
-      } else if (select) {
-        select.value = value;
-        select.title = value;
-      } else {
-        td.textContent = value;
-      }
-    });
+    appendEmptyState(table, getVisibleDutyRows().length, visibleCols.length);
   }
 
   function applyDutyStatusSideEffectsToClientRow(row) {
     if (!Array.isArray(row)) return;
-    while (row.length < 15) row.push("");
-
     const status = String(row[7] || "").trim();
     if (!status) return;
 
@@ -829,7 +630,7 @@
   function renderDutyFilterOptions() {
     setSelectOptions("#dutyStatusFilter", "全部狀態", uniqueFromDutyRows(7));
     setSelectOptions("#dutyPeriodFilter", "全部節次", uniqueFromDutyRows(2));
-    setSelectOptions("#dutyTeacherFilter", "全部代課老師", uniqueFromDutyRows(8));
+    setSelectOptions("#dutyTeacherFilter", "全部建議代課老師", uniqueFromDutyRows(8));
     syncDutyFilterControls();
   }
 
@@ -942,14 +743,12 @@
   function appendEditableCell(tr, value, onChange) {
     const td = tr.insertCell();
     td.appendChild(createInput(value, onChange));
-    return td;
   }
 
   function appendReadonlyCell(tr, value) {
     const td = tr.insertCell();
     td.className = "readonly";
     td.textContent = value || "";
-    return td;
   }
 
   function appendSelectCell(tr, value, options, onChange) {
@@ -965,19 +764,6 @@
     });
     select.addEventListener("change", () => onChange(select.value));
     td.appendChild(select);
-    return td;
-  }
-
-  function appendDeleteCell(tr, onDelete) {
-    const td = tr.insertCell();
-    td.className = "row-action-cell";
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "row-delete-button";
-    button.textContent = "刪除";
-    button.addEventListener("click", onDelete);
-    td.appendChild(button);
-    return td;
   }
 
   function appendEmptyState(table, rowCount, colCount) {
@@ -1015,12 +801,6 @@
       dateDisplay: data && data.dateDisplay,
       weekday: data && data.weekday
     };
-  }
-
-  function cloneRows(rows) {
-    return Array.isArray(rows)
-      ? rows.map(row => Array.isArray(row) ? row.slice() : Object.assign({}, row))
-      : [];
   }
 
   function normalizeAdjustData(data) {
@@ -1065,26 +845,15 @@
 
   function markDirty(sectionName) {
     state.dirty.add(sectionName);
-    state.dirtyVersion[sectionName] = (state.dirtyVersion[sectionName] || 0) + 1;
     setSyncStatus("尚未同步", "dirty");
-    scheduleAutoSave(sectionName);
     renderDirtyLines();
   }
 
   function renderDirtyLines() {
     $$("[data-dirty]").forEach(el => {
-      const sectionName = el.dataset.dirty;
-      const dirty = state.dirty.has(sectionName);
-      const saving = state.saving.has(sectionName);
-      const queued = state.autoSaveTimers.has(sectionName);
-      const autoSaveEnabled = isAutoSaveEnabled(sectionName);
-      el.textContent = saving
-        ? "自動同步中"
-        : (dirty && queued
-          ? "尚未同步（即將自動同步）"
-          : (dirty && !autoSaveEnabled ? "尚未同步（請按同步到後台）" : (dirty ? "尚未同步" : "已同步")));
+      const dirty = state.dirty.has(el.dataset.dirty);
+      el.textContent = dirty ? "尚未同步" : "已同步";
       el.classList.toggle("is-dirty", dirty);
-      el.classList.toggle("is-saving", saving);
     });
   }
 
@@ -1101,22 +870,16 @@
   }
 
   function updateLinks() {
-    const config = window.APP_CONFIG || {};
-    setLink("#legacyLink", config.LEGACY_WEBAPP_URL);
-    setLink("#toolsLegacyLink", config.LEGACY_WEBAPP_URL);
     const backendUrl = summaryValue("backendUrl") || (state.meta && state.meta.sheetUrl);
     setLink("#sheetLink", backendUrl);
     setLink("#toolsSheetLink", backendUrl);
-    $$("[data-sheet-link]").forEach(el => setLinkElement(el, backendUrl));
+    setLink("#dutyPaperLink", state.meta && state.meta.substitutePaperFolderUrl);
+    setLink("#dutyTeacherSearchLink", state.meta && state.meta.teacherFreePeriodSearchUrl);
   }
 
   function setLink(selector, href) {
     const el = $(selector);
     if (!el) return;
-    setLinkElement(el, href);
-  }
-
-  function setLinkElement(el, href) {
     if (href) {
       el.href = href;
       el.classList.remove("disabled-link");
@@ -1166,11 +929,6 @@
       minute: "2-digit",
       second: "2-digit"
     });
-  }
-
-  function formatDateInputForDisplay(value) {
-    const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    return match ? [match[1], match[2], match[3]].join("/") : "";
   }
 
   function setText(selector, value) {

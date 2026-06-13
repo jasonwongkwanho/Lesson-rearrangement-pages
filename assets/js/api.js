@@ -37,13 +37,14 @@
     }
   }
 
-  async function apiCall(action, payload) {
+  async function apiCall(action, payload, callOptions) {
     if (!hasApiUrl()) {
       const message = "未設定 API_URL，請先在 docs/config.js 填入 Apps Script Web App /exec URL。";
       emit("failed", message);
       throw new Error(message);
     }
 
+    const suppressFailureStatus = Boolean(callOptions && callOptions.suppressFailureStatus);
     pendingCount += 1;
     emit("syncing", "正在同步");
 
@@ -74,7 +75,9 @@
       return result.data;
     } catch (err) {
       pendingCount = Math.max(0, pendingCount - 1);
-      emit("failed", err && err.message ? err.message : "同步失敗");
+      if (!suppressFailureStatus) {
+        emit("failed", err && err.message ? err.message : "同步失敗");
+      }
       throw err;
     }
   }

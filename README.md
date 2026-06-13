@@ -1,4 +1,4 @@
-# 編代課系統網頁同步版
+# 編代課系統
 
 這個資料夾是 public pages repo 專用輸出版，只包含可公開部署的靜態網頁檔案。
 
@@ -28,15 +28,10 @@ Lesson-rearrangement-pages/
 
 ## 部署設定
 
-`config.js` 內的 `API_URL` 和 `LEGACY_WEBAPP_URL` 需要在 public repo 部署前填入。
+`config.js` 內的 `API_URL` 需要在 public repo 部署前填入。
 
 注意：public repo 內的 `config.js` 會被公開讀取，所以 Apps Script API 不能只依賴 URL 保密。正式使用前應確認 Apps Script Web App 的存取權限設定符合學校需要。
 
-## 同步策略
+首頁「切換日期並同步」會呼叫 Apps Script 的 `apiSwitchScheduleDateAndLoad`：有該日 CSV 備存就載入，沒有備存就清空每日資料並保留新日期。前台不做自動同步；如線上 Apps Script 尚未部署此 API，會 fallback 用舊有 `apiSaveRequestData` 先更新日期，再嘗試 LOAD，找不到備存時清空舊有資料。
 
-- 前台輸入會即時更新畫面。
-- 更改安排日期會即時通知 Apps Script 查找該日期 CSV 資料夾；有資料就載入，沒有資料夾就清空每日資料並顯示空白。
-- 若目前有尚未同步改動，前台會先要求完成同步才可轉日期，避免覆蓋未儲存內容。
-- 輕量頁面可用背景自動同步，預設停手 5 秒後才寫入後台，避免每打一格都呼叫 Apps Script。
-- `AUTO_SAVE_SECTIONS` 預設只包含 `request`、`adjust`、`manualPlan`、`cancelled`。
-- `duty`（安排代課）保留手動「同步到後台 / 確認並同步」，因為後端儲存會連動較重的 Apps Script 流程。
+右上角 `SAVE` / `LOAD` 分別執行 CSV 備份輸出及 CSV 備份載入；「匯出 MS Access 格式」完成後會同時開啟 Google Sheet 的 `Access 專用` 工作頁。
