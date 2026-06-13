@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>編代課系統｜網頁同步版</title>
+  <link rel="stylesheet" href="./assets/css/styles.css">
+  <script src="./config.js" defer></script>
+  <script src="./assets/js/api.js" defer></script>
+  <script src="./assets/js/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主導覽">
+      <div class="brand-block">
+        <span class="brand-mark">LR</span>
+        <div>
+          <strong data-app-name>編代課系統</strong>
+          <small data-app-subtitle>網頁同步版</small>
+        </div>
+      </div>
+
+      <nav class="nav-list">
+        <button class="nav-button active" type="button" data-nav="dashboard">首頁 Dashboard</button>
+        <button class="nav-button" type="button" data-nav="request">缺課名單</button>
+        <button class="nav-button" type="button" data-nav="adjust">調堂安排</button>
+        <button class="nav-button" type="button" data-nav="manualPlan">代課老師</button>
+        <button class="nav-button" type="button" data-nav="cancelled">取消課節可調入名單</button>
+        <button class="nav-button" type="button" data-nav="duty">安排代課</button>
+        <button class="nav-button" type="button" data-nav="tools">系統工具</button>
+      </nav>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div>
+          <span class="school-name" data-school-name>香海正覺蓮社佛教普光學校</span>
+          <h1 data-page-title>首頁 Dashboard</h1>
+        </div>
+        <div class="sync-panel" aria-live="polite">
+          <span id="syncStatus" class="sync-pill neutral">尚未同步</span>
+          <span id="lastSyncText" class="sync-time">最後同步時間：--</span>
+          <button class="button secondary" type="button" data-refresh-current>重新同步資料</button>
+        </div>
+      </header>
+
+      <div id="configAlert" class="alert hidden" role="alert"></div>
+      <div id="toastHost" class="toast-host" aria-live="polite"></div>
+
+      <section class="view active" data-view="dashboard">
+        <div class="dashboard-hero">
+          <div>
+            <span class="eyebrow">今日流程</span>
+            <h2>編代課同步總覽</h2>
+          </div>
+          <div class="hero-actions">
+            <a id="legacyLink" class="button secondary disabled-link" href="#" target="_blank" rel="noopener">原 WebApp 後備入口</a>
+            <a id="sheetLink" class="button primary disabled-link" href="#" target="_blank" rel="noopener">Google Sheet 後台</a>
+          </div>
+        </div>
+
+        <div class="metric-grid">
+          <article class="metric-card color-blue">
+            <span>安排日期</span>
+            <strong id="metricDate">--</strong>
+          </article>
+          <article class="metric-card color-green">
+            <span>星期</span>
+            <strong id="metricWeekday">--</strong>
+          </article>
+          <article class="metric-card color-pink">
+            <span>缺課名單數量</span>
+            <strong id="metricRequestCount">--</strong>
+          </article>
+          <article class="metric-card color-orange">
+            <span>調堂節數</span>
+            <strong id="metricAdjustCount">--</strong>
+          </article>
+          <article class="metric-card color-purple">
+            <span>需安排代課節數</span>
+            <strong id="metricDutyCount">--</strong>
+          </article>
+          <article class="metric-card color-teal">
+            <span>資料夾名稱</span>
+            <strong id="metricFolder">--</strong>
+          </article>
+        </div>
+
+        <div class="section-band">
+          <div class="section-head compact">
+            <div>
+              <span class="eyebrow">同步狀態</span>
+              <h2>後台連線</h2>
+            </div>
+            <button class="button primary" type="button" data-refresh-all>重新同步資料</button>
+          </div>
+          <div class="status-grid">
+            <div>
+              <span>最後同步時間</span>
+              <strong id="homeLastSync">--</strong>
+            </div>
+            <div>
+              <span>API Gateway</span>
+              <strong id="apiEndpointState">未設定</strong>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" data-view="request">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Request</span>
+            <h2>缺課名單</h2>
+          </div>
+          <div class="actions">
+            <button class="button secondary" type="button" data-add-row="request">新增一列</button>
+            <button class="button secondary" type="button" data-refresh-section="request">重新同步資料</button>
+            <button class="button primary" type="button" data-save-section="request">確認並同步</button>
+          </div>
+        </div>
+        <div class="dirty-line" data-dirty="request">已同步</div>
+        <div class="table-shell">
+          <table id="requestTable"></table>
+        </div>
+      </section>
+
+      <section class="view" data-view="adjust">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Adjustment</span>
+            <h2>調堂安排</h2>
+          </div>
+          <div class="actions">
+            <button class="button secondary" type="button" data-add-row="adjust">新增一列</button>
+            <button class="button secondary" type="button" data-refresh-section="adjust">重新同步資料</button>
+            <button class="button primary" type="button" data-save-section="adjust">確認並同步</button>
+          </div>
+        </div>
+        <div class="dirty-line" data-dirty="adjust">已同步</div>
+        <div class="table-shell">
+          <table id="adjustTable"></table>
+        </div>
+      </section>
+
+      <section class="view" data-view="manualPlan">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Teacher Plan</span>
+            <h2>代課老師</h2>
+          </div>
+          <div class="actions">
+            <button class="button secondary" type="button" data-add-row="manualPlan">新增一列</button>
+            <button class="button secondary" type="button" data-refresh-section="manualPlan">重新同步資料</button>
+            <button class="button primary" type="button" data-save-section="manualPlan">同步到後台</button>
+          </div>
+        </div>
+        <div class="dirty-line" data-dirty="manualPlan">已同步</div>
+        <div class="table-shell">
+          <table id="manualPlanTable"></table>
+        </div>
+      </section>
+
+      <section class="view" data-view="cancelled">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Cancelled Lessons</span>
+            <h2>取消課節可調入名單</h2>
+          </div>
+          <div class="actions">
+            <button class="button secondary" type="button" data-add-row="cancelled">新增一列</button>
+            <button class="button secondary" type="button" data-refresh-section="cancelled">重新同步資料</button>
+            <button class="button primary" type="button" data-save-section="cancelled">同步到後台</button>
+          </div>
+        </div>
+        <div class="dirty-line" data-dirty="cancelled">已同步</div>
+        <div class="table-shell">
+          <table id="cancelledTable"></table>
+        </div>
+      </section>
+
+      <section class="view" data-view="duty">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Duty Arrangement</span>
+            <h2>安排代課</h2>
+          </div>
+          <div class="actions">
+            <button class="button secondary" type="button" data-refresh-section="duty">重新同步資料</button>
+            <button class="button secondary" type="button" data-save-section="duty">同步到後台</button>
+            <button class="button primary" type="button" data-confirm-arrange>確認並同步</button>
+          </div>
+        </div>
+        <div class="dirty-line" data-dirty="duty">已同步</div>
+        <div class="filter-bar" aria-label="安排代課篩選排列器">
+          <label>
+            <span>搜尋</span>
+            <input id="dutySearch" class="filter-input" type="search" placeholder="課節 / 老師 / 班別">
+          </label>
+          <label>
+            <span>狀態</span>
+            <select id="dutyStatusFilter" class="filter-input"></select>
+          </label>
+          <label>
+            <span>節次</span>
+            <select id="dutyPeriodFilter" class="filter-input"></select>
+          </label>
+          <label>
+            <span>代課老師</span>
+            <select id="dutyTeacherFilter" class="filter-input"></select>
+          </label>
+          <label>
+            <span>排列</span>
+            <select id="dutySortBy" class="filter-input">
+              <option value="period">課節次序</option>
+              <option value="status">狀態</option>
+              <option value="originTeacher">原任老師</option>
+              <option value="substituteTeacher">代課老師</option>
+              <option value="group">班別或組別</option>
+            </select>
+          </label>
+          <button id="dutySortDirection" class="button secondary" type="button" aria-pressed="false">升序</button>
+          <button id="dutyFilterReset" class="button secondary" type="button">重設</button>
+        </div>
+        <div class="table-shell wide">
+          <table id="dutyTable"></table>
+        </div>
+      </section>
+
+      <section class="view" data-view="tools">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">System Tools</span>
+            <h2>系統工具 / 後台連結區</h2>
+          </div>
+          <button class="button secondary" type="button" data-refresh-all>重新同步資料</button>
+        </div>
+
+        <div class="tool-grid">
+          <div class="tool-panel">
+            <h3>生成與建議</h3>
+            <button class="tool-button primary" type="button" data-run-action="autoGenerateSubstituteLessons1">確認並同步：生成代課課節</button>
+            <button class="tool-button primary" type="button" data-run-action="autoGenerateAndApplyManualSubstitutePlan">確認並同步：套用代課老師</button>
+            <button class="tool-button primary" type="button" data-run-action="autoGenerateAndSuggest">確認並同步：自動建議代課老師</button>
+          </div>
+          <div class="tool-panel">
+            <h3>輸出與通知</h3>
+            <button class="tool-button" type="button" data-run-action="previewSubstituteTeacherEmails">預覽代課老師通知</button>
+            <button class="tool-button" type="button" data-run-action="sendSubstituteTeacherEmails">確認並同步：發送通知及 PDF</button>
+            <button class="tool-button" type="button" data-run-action="exportAndUpdateSummary">同步到後台：匯出 Access</button>
+          </div>
+          <div class="tool-panel danger">
+            <h3>高風險工具</h3>
+            <button class="tool-button" type="button" data-run-action="exportCsv">同步到後台：輸出 CSV 備份</button>
+            <button class="tool-button" type="button" data-run-action="importCsv">確認並同步：載入 CSV 備份</button>
+            <button class="tool-button" type="button" data-run-action="adjustSubstituteDutyValue_FinalV2">確認並同步：結算代課值</button>
+            <button class="tool-button danger" type="button" data-run-action="clearDailyData">確認並同步：清空每日資料</button>
+          </div>
+          <div class="tool-panel link-panel">
+            <h3>後台入口</h3>
+            <a id="toolsLegacyLink" class="button secondary disabled-link" href="#" target="_blank" rel="noopener">原 WebApp 後備入口</a>
+            <a id="toolsSheetLink" class="button primary disabled-link" href="#" target="_blank" rel="noopener">Google Sheet 後台</a>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
