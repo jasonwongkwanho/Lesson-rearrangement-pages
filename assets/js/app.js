@@ -266,7 +266,10 @@
   async function confirmArrange() {
     if (!ensureApiConfigured()) return;
     try {
-      await window.AppApi.apiCall("apiSaveDutyData", { rows: state.duty.rows });
+      const saveResult = state.dirty.has("duty")
+        ? await window.AppApi.apiCall("apiSaveDutyData", { rows: state.duty.rows })
+        : null;
+      if (saveResult && saveResult.success === false) throw new Error(saveResult.message || "同步失敗");
       await window.AppApi.apiCall("apiRunAction", { actionName: "autoGenerateAndSuggest" });
       state.dirty.delete("duty");
       await syncAll();
