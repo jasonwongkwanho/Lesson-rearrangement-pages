@@ -42,6 +42,7 @@
     autoSaveTimers: new Map(),
     saving: new Set(),
     isSyncing: false,
+    isSwitchingDate: false,
     lastSyncAt: null
   };
 
@@ -85,7 +86,7 @@
     });
     $$("[data-save-date]").forEach(button => button.addEventListener("click", saveScheduleDate));
     $$("[data-schedule-date]").forEach(input => {
-      input.addEventListener("change", () => updateScheduleDate(input.value, true));
+      input.addEventListener("change", () => switchScheduleDate(input.value));
     });
     const arrangeButton = $("[data-confirm-arrange]");
     if (arrangeButton) arrangeButton.addEventListener("click", confirmArrange);
@@ -301,28 +302,51 @@
   }
 
   async function saveScheduleDate() {
+    await switchScheduleDate(getScheduleDateValue(), { force: true });
+  }
+
+  async function switchScheduleDate(dateInput, options) {
+    const settings = Object.assign({ force: false }, options || {});
     if (!ensureApiConfigured()) return;
-    if (state.saving.has("request")) {
-      showToast("日期正在自動同步，請稍候。");
+    const nextDate = dateInput || "";
+    const currentDate = state.request.dateInput || summaryValue("selectedDateInput") || "";
+
+    if (!settings.force && nextDate === currentDate) {
+      updateScheduleDate(nextDate);
       return;
     }
-    const dateInput = getScheduleDateValue();
+
+    if (state.isSwitchingDate) {
+      setScheduleDateInputs(currentDate);
+      showToast("日期資料正在載入，請稍候。");
+      return;
+    }
+
+    if (state.dirty.size || state.saving.size) {
+      setScheduleDateInputs(currentDate);
+      setSyncStatus("尚未同步", "dirty");
+      showToast("有尚未同步改動，請先確認並同步後再轉日期。", "error");
+      return;
+    }
+
     try {
-      cancelAutoSave("request");
-      if (!state.loaded.has("request")) {
-        state.request = normalizeRequestData(await window.AppApi.apiCall(READ_ACTIONS.request));
-        state.loaded.add("request");
-      }
-      state.request.dateInput = dateInput;
-      await window.AppApi.apiCall("apiSaveRequestData", {
-        dateInput,
-        rows: state.request.rows
-      });
-      state.dirty.delete("request");
-      await refreshAfterSave("request");
-      showToast("已同步日期");
+      state.isSwitchingDate = true;
+      cancelAllAutoSaves();
+      updateScheduleDate(nextDate);
+      setSyncStatus("正在載入日期資料", "syncing");
+      setButtonsDisabled(true);
+
+      const result = await window.AppApi.apiCall("apiSwitchScheduleDateAndLoad", { dateInput: nextDate });
+      clearDirtyState();
+      await refreshAfterDateSwitch();
+      showToast((result && result.message) || (result && result.loaded ? "已載入日期資料" : "此日期未有資料夾資料，已顯示空白。"));
     } catch (err) {
+      updateScheduleDate(currentDate);
       showToast(err.message || "同步日期失敗", "error");
+    } finally {
+      state.isSwitchingDate = false;
+      setButtonsDisabled(state.isSyncing);
+      renderDirtyLines();
     }
   }
 
@@ -407,6 +431,17 @@
     state.autoSaveTimers.delete(sectionName);
   }
 
+  function cancelAllAutoSaves() {
+    state.autoSaveTimers.forEach(timer => window.clearTimeout(timer));
+    state.autoSaveTimers.clear();
+  }
+
+  function clearDirtyState() {
+    cancelAllAutoSaves();
+    state.dirty.clear();
+    state.dirtyVersion = {};
+  }
+
   async function autoSaveSection(sectionName, options) {
     const settings = Object.assign({ quiet: false }, options || {});
     cancelAutoSave(sectionName);
@@ -478,6 +513,31 @@
     renderAll();
   }
 
+  async function refreshAfterDateSwitch() {
+    const sectionsToReload = new Set(
+      Array.from(state.loaded).filter(sectionName => sectionName !== "meta" && READ_ACTIONS[sectionName])
+    );
+
+    if (state.activeView !== "dashboard" && state.activeView !== "tools" && READ_ACTIONS[state.activeView]) {
+      sectionsToReload.add(state.activeView);
+    }
+
+    const jobs = [
+      window.AppApi.apiCall(READ_ACTIONS.meta).then(meta => {
+        state.meta = meta || null;
+        state.loaded.add("meta");
+      })
+    ];
+
+    sectionsToReload.forEach(sectionName => {
+      jobs.push(window.AppApi.apiCall(READ_ACTIONS[sectionName]).then(data => assignSectionData(sectionName, data)));
+    });
+
+    await Promise.all(jobs);
+    updateLastSync();
+    renderAll();
+  }
+
   function addRow(sectionName) {
     if (sectionName === "request") {
       const width = Math.max(1, state.request.header.length || 15);
@@ -513,11 +573,10 @@
     renderAll();
   }
 
-  function updateScheduleDate(dateInput, userInput) {
+  function updateScheduleDate(dateInput) {
     state.request.dateInput = dateInput || "";
     setScheduleDateInputs(state.request.dateInput);
     setText("#metricDate", formatDateInputForDisplay(state.request.dateInput) || "--");
-    if (userInput) markDirty("request");
   }
 
   function getScheduleDateValue() {
