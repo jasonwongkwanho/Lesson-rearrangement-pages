@@ -710,32 +710,120 @@
   function renderDutyTable() {
     const table = $("#dutyTable");
     clear(table);
-    const visibleCols = state.duty.visibleCols && state.duty.visibleCols.length
-      ? state.duty.visibleCols
-      : fallbackDutyVisibleCols();
+    const visibleCols = getDutyVisibleCols();
     appendHeader(table, visibleCols.map(col => col.label || state.duty.headers[col.idx] || ("欄 " + (col.idx + 1))).concat("操作"));
     const body = table.createTBody();
-    getVisibleDutyRows().forEach(row => {
+    const visibleRows = getVisibleDutyRows();
+    visibleRows.forEach(row => {
       const tr = body.insertRow();
       visibleCols.forEach(col => {
         const value = row[col.idx] || "";
+        let td;
         if (col.readonly) {
-          appendReadonlyCell(tr, value);
+          td = appendReadonlyCell(tr, value);
         } else if (col.idx === 7 && state.duty.statusOptions && state.duty.statusOptions.length) {
-          appendSelectCell(tr, value, state.duty.statusOptions, selected => {
-            row[col.idx] = selected;
-            markDirty("duty");
-          });
+          td = appendSelectCell(tr, value, state.duty.statusOptions, selected => updateDutyCell(row, col.idx, selected, tr));
+          td.classList.add("duty-status-cell");
         } else {
-          appendEditableCell(tr, value, updated => {
-            row[col.idx] = updated;
-            markDirty("duty");
-          });
+          td = appendEditableCell(tr, value, updated => updateDutyCell(row, col.idx, updated, tr));
         }
+        td.dataset.dutyCol = String(col.idx);
       });
       appendDeleteCell(tr, () => removeDutyRow(row));
     });
-    appendEmptyState(table, getVisibleDutyRows().length, visibleCols.length + 1);
+    appendEmptyState(table, visibleRows.length, visibleCols.length + 1);
+  }
+
+  function getDutyVisibleCols() {
+    return state.duty.visibleCols && state.duty.visibleCols.length
+      ? state.duty.visibleCols
+      : fallbackDutyVisibleCols();
+  }
+
+  function updateDutyCell(row, colIdx, value, tr) {
+    row[colIdx] = value;
+
+    if (colIdx === 7) {
+      applyDutyStatusSideEffectsToClientRow(row);
+      markDirty("duty");
+      if (shouldRerenderDutyTableAfterStatusChange()) {
+        renderDutyTable();
+      } else {
+        updateDutyRowCells(tr, row);
+      }
+      return;
+    }
+
+    markDirty("duty");
+  }
+
+  function shouldRerenderDutyTableAfterStatusChange() {
+    const filter = state.dutyFilter;
+    return Boolean(
+      filter.search ||
+      filter.status ||
+      filter.teacher ||
+      filter.sortBy === "status" ||
+      filter.sortBy === "substituteTeacher"
+    );
+  }
+
+  function updateDutyRowCells(tr, row) {
+    if (!tr) return;
+    getDutyVisibleCols().forEach(col => {
+      const td = tr.querySelector('[data-duty-col="' + col.idx + '"]');
+      if (!td) return;
+      const value = row[col.idx] || "";
+      const input = td.querySelector("input");
+      const select = td.querySelector("select");
+
+      if (input) {
+        input.value = value;
+        input.title = value;
+      } else if (select) {
+        select.value = value;
+        select.title = value;
+      } else {
+        td.textContent = value;
+      }
+    });
+  }
+
+  function applyDutyStatusSideEffectsToClientRow(row) {
+    if (!Array.isArray(row)) return;
+    while (row.length < 15) row.push("");
+
+    const status = String(row[7] || "").trim();
+    if (!status) return;
+
+    const writeKLM = ({ k, l, m }) => {
+      if (k !== undefined) row[10] = k;
+      if (l !== undefined) row[11] = l;
+      if (m !== undefined) row[12] = m;
+    };
+
+    const clearIJO = () => {
+      row[8] = "";
+      row[9] = "";
+      row[14] = "";
+    };
+
+    if (status.startsWith("系統編代課")) {
+      writeKLM({ k: "", l: false, m: false });
+      clearIJO();
+    } else if (status.startsWith("手動編代課")) {
+      writeKLM({ k: "代堂", l: true, m: false });
+      clearIJO();
+    } else if (status.startsWith("取消課節") && status.includes("原任調課")) {
+      writeKLM({ k: "", l: true, m: true });
+      clearIJO();
+    } else if (status.startsWith("取消課節")) {
+      writeKLM({ k: "", l: true, m: false });
+      clearIJO();
+    } else if (status.includes("調入被取消課節老師")) {
+      writeKLM({ k: "調堂", l: true, m: true });
+      clearIJO();
+    }
   }
 
   function renderDutyFilterOptions() {
@@ -854,12 +942,14 @@
   function appendEditableCell(tr, value, onChange) {
     const td = tr.insertCell();
     td.appendChild(createInput(value, onChange));
+    return td;
   }
 
   function appendReadonlyCell(tr, value) {
     const td = tr.insertCell();
     td.className = "readonly";
     td.textContent = value || "";
+    return td;
   }
 
   function appendSelectCell(tr, value, options, onChange) {
@@ -875,6 +965,7 @@
     });
     select.addEventListener("change", () => onChange(select.value));
     td.appendChild(select);
+    return td;
   }
 
   function appendDeleteCell(tr, onDelete) {
@@ -886,6 +977,7 @@
     button.textContent = "刪除";
     button.addEventListener("click", onDelete);
     td.appendChild(button);
+    return td;
   }
 
   function appendEmptyState(table, rowCount, colCount) {
